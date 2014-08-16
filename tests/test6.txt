@@ -1,0 +1,14 @@
+perl -e 'for ($c = 2; $c > 0; $c--) { sleep 1 }'
+jobs
+ps -o state,pid,ppid,wchan,command
+perl -e 'for ($c = 2; $c > 0; $c--) { sleep 1 }'&
+jobs
+ps -o state,pid,ppid,wchan,command
+sleep 3
+jobs
+ps -o state,pid,ppid,wchan,command
+perl -e 'for ($c = 10; $c > 0; $c--) { print $c }' | wc &
+jobs
+ps -o state,pid,ppid,wchan,command
+sleep 1
+ps -o state,pid,ppid,wchan,command

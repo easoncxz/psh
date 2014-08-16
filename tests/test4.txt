@@ -1,0 +1,8 @@
+ls -l | wc
+ls -l | grep ^d
+ls -al | grep ^d
+ls -al | grep ^d | wc -l
+ls -l|echo ok
+ls -l | echo bad |
+| ls -l
+ls -l || wc

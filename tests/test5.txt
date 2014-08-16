@@ -1,0 +1,9 @@
+perl -e "for ($c = 2; $c > 0; $c--) { print 'x'; sleep 1 }"
+jobs
+ps -o state,pid,ppid,wchan,command
+perl -e "for ($c = 2; $c > 0; $c--) { print 'x'; sleep 1 }"&
+jobs
+ps -o state,pid,ppid,wchan,command
+sleep 4
+jobs
+ps -o state,pid,ppid,wchan,command

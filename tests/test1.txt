@@ -1,0 +1,4 @@
+ls
+ls -l
+ps -o state,pid,ppid,wchan,command
+diff -y test1 test1

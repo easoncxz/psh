@@ -1,0 +1,11 @@
+pwd
+cd /bin
+pwd
+cd /doesnotexist
+pwd
+cd
+pwd
+cd /usr/bin
+pwd
+cd ../..
+pwd
