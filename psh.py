@@ -48,11 +48,11 @@ class JobList:
     def as_table(self):
         return [(jid, self._dict[jid][0], self._dict[jid][1]) for jid in sorted(self._dict)]
 
-job_list = JobList()
-
 debugging = True
 
 debug = print if debugging else lambda *x: None
+
+job_list = JobList()
 
 init_dir = None
 
@@ -215,6 +215,8 @@ def main():
 
         except PSHUserError as e:
             print(e)
+        except KeyboardInterrupt as e:
+            print()
         except EOFError as e:
             print()
             return
