@@ -15,6 +15,41 @@ class PSHUserError(Exception):
 class PSHProgrammerError(Exception):
     pass
 
+class JobList:
+
+    def __init__(self):
+        self._dict = dict()
+
+    def add(self, pid, command):
+        if not self._dict:
+            jid = 1
+        else:
+            jid = max(self._dict.keys()) + 1
+        self._dict[jid] = (pid, command)
+        return jid
+
+    def get(self, jid):
+        return self._dict.get(jid)
+
+    def delete(self, jid=None, pid=None):
+        if jid and pid:
+            if self._dict.get(jid) == pid:
+                del self._dict[jid]
+            else:
+                raise PSHProgrammerError("The jid-pid correspondence is wrong.")
+        elif jid:
+            if jid in self._dict:
+                del self._dict[jid]
+        elif pid:
+            for jid in self._dict:
+                if self._dict[jid] == pid:
+                    del self._dict[jid]
+
+    def get_all(self):
+        return [(jid, self._dict[jid][0], self._dict[jid][1]) for jid in sorted(self._dict)]
+
+job_list = JobList()
+
 debugging = True
 
 debug = print if debugging else lambda *x: None
@@ -22,13 +57,49 @@ debug = print if debugging else lambda *x: None
 builtins = {
     'cd',
     'pwd',
-
+    'jobs',
 }
 
 init_dir = None
 
 def suicide():
     os.kill(os.getpid(), signal.SIGTERM)
+
+state_description_for_code = {
+    'I': 'Idle',
+    'R': 'Runnable',
+    'S': 'Sleeping',
+    'T': 'Stopped',
+    'U': 'Uninterruptable',
+    'Z': 'Zombie',
+}
+
+def get_process_something(pid, *things):
+    import subprocess
+    ps_output_lines = subprocess.getoutput('ps -p {pid} -o {things}='.format(
+            pid=pid,
+            things=','.join(things)
+        )).splitlines()
+    if not ps_output_lines:
+        raise PSHProgrammerError("Attempted to get info of a non-existant process.")
+    elif len(ps_output_lines) == 1:
+        return ps_output_lines[0]
+    else:
+        raise PSHProgrammerError("WTH Multiple processes with the same pid??")
+
+def get_process_state(pid):
+    code = get_process_something(pid, 'state')[0]  # Read the first character of the line
+    return state_description_for_code[code]
+
+def get_process_command_head(pid):
+    raw_command = get_process_something(pid, 'comm')
+    return parse(raw_command)
+
+def make_job_description(jid, state, command):
+    return "[{jid}] {state}\t\t{command}".format(
+            jid=jid,
+            state=state,
+            command=(' '.join(command)))
 
 def split_on_last_pipe(command):
     '''Only takes a non-empty command that has at least one pipe as the argument.'''
@@ -69,6 +140,10 @@ def run_builtin(command):
                     pass
         elif name == 'pwd':
             print(os.getcwd())
+        elif name == 'jobs':
+            jobs_table = job_list.get_all()
+            for jid, pid, command in jobs_table:
+                print(make_job_description(jid=jid, state=get_process_state(pid), command=command))
 
 def exec_one_command(command):
     '''Takes a non-empty list as the argument.
@@ -130,7 +205,13 @@ def main():
                     top_pid = os.fork()
                     if top_pid == 0:  # So that we still have our shell after executing the command!
                         exec_one_command(command)
-                    elif command[-1] != '&':  # (If) We weren't asked to run the command in background
+                    elif command[-1] == '&':  # (If) We were asked to run the command in background
+                        # Note that the command has *already started running*.
+                        global job_list
+                        jid = job_list.add(top_pid, command)
+                        state = get_process_state(pid=top_pid)
+                        print(make_job_description(jid=jid, state=state, command=command))
+                    else:
                         os.waitpid(top_pid, 0)
         except PSHUserError as e:
             print(e)
