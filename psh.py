@@ -54,12 +54,6 @@ debugging = True
 
 debug = print if debugging else lambda *x: None
 
-builtins = {
-    'cd',
-    'pwd',
-    'jobs',
-}
-
 init_dir = None
 
 def suicide():
@@ -133,17 +127,21 @@ def run_builtin(command):
         elif name == 'cd':
             if len(command) == 1:  # The command was `cd`, with no argument.
                 os.chdir(init_dir)
+                return True
             else:  # There was some arguments.
                 try:
                     os.chdir(command[1])  # Ignores the command line args after the first arg, like how Bash does.
+                    return True
                 finally:
                     pass
         elif name == 'pwd':
             print(os.getcwd())
+            return True
         elif name == 'jobs':
             jobs_table = job_list.get_all()
             for jid, pid, command in jobs_table:
                 print(make_job_description(jid=jid, state=get_process_state(pid), command=command))
+            return True
 
 def exec_one_command(command):
     '''Takes a non-empty list as the argument.
@@ -173,8 +171,7 @@ def exec_one_command(command):
                 os.close(pipein)
                 os.close(pipeout)
                 exec_one_command(last_command)  # require checking!!
-        elif command[0] in builtins:
-            run_builtin(command)
+        elif run_builtin(command):
             suicide()  # Imitate the `exec` behaviour of throwing our own process away.
         else:
             try:
