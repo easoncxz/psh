@@ -45,7 +45,7 @@ class JobList:
                 if self._dict[jid] == pid:
                     del self._dict[jid]
 
-    def get_all(self):
+    def as_table(self):
         return [(jid, self._dict[jid][0], self._dict[jid][1]) for jid in sorted(self._dict)]
 
 job_list = JobList()
@@ -117,14 +117,14 @@ def split_on_last_pipe(command):
 
 def run_builtin(command):
     '''Takes a non-empty list as the argument.
-    Calling this function will cause the current program to be dumped out of the current process!'''
+    Calling this function will cause the current program to be dumped out of the current process!
+    Returns `True` upon successful finish.'''
+
     if not command:
         raise PSHProgrammerError("An empty command has been treated as a builtin.")
     else:
         name = command[0]
-        if name not in builtins:
-            raise PSHProgrammerError("A non-builtin command has been treated as a builtin.")
-        elif name == 'cd':
+        if name == 'cd':
             if len(command) == 1:  # The command was `cd`, with no argument.
                 os.chdir(init_dir)
                 return True
@@ -138,7 +138,7 @@ def run_builtin(command):
             print(os.getcwd())
             return True
         elif name == 'jobs':
-            jobs_table = job_list.get_all()
+            jobs_table = job_list.as_table()
             for jid, pid, command in jobs_table:
                 print(make_job_description(jid=jid, state=get_process_state(pid), command=command))
             return True
@@ -157,7 +157,6 @@ def exec_one_command(command):
 
         if '|' in command:
             prev_commands, last_command = split_on_last_pipe(command)
-            debug("split result:", prev_commands, last_command)
             pipein, pipeout = os.pipe()
             pid = os.fork()
             if not pid:  # child, which deals with all the stuff before the last pipe
@@ -178,8 +177,6 @@ def exec_one_command(command):
                 os.execvp(command[0], command)
             except FileNotFoundError as e:
                 raise PSHUserError("Bad command or file name.")
-            finally:
-                pass
     except PSHUserError as e:
         print(e)
         suicide()
@@ -189,27 +186,33 @@ def exec_one_command(command):
 
 def main():
     global init_dir
+    global job_list
     init_dir = os.getcwd()
     while True:
         try:
+            jobs_table_before = [(jid, pid, command, get_process_state(pid)) for (jid, pid, command) in job_list.as_table()]
             command = parse(input('psh> '))
             if command:
-                if '|' not in command and command[0] in builtins:
+                if '|' in command or not run_builtin(command):
                     # This means that if a builtin command is to take effect, it has to not be in any pipeline.
                     # If a builtin command is in a pipeline, it will end up in a different process.
-                    run_builtin(command)
-                else:
+
                     top_pid = os.fork()
                     if top_pid == 0:  # So that we still have our shell after executing the command!
                         exec_one_command(command)
                     elif command[-1] == '&':  # (If) We were asked to run the command in background
                         # Note that the command has *already started running*.
-                        global job_list
                         jid = job_list.add(top_pid, command)
                         state = get_process_state(pid=top_pid)
                         print(make_job_description(jid=jid, state=state, command=command))
                     else:
                         os.waitpid(top_pid, 0)
+
+                        # Show state changes of previously-run commands
+                        for jid, pid, command, state in jobs_table_before:
+                            if get_process_state(pid) != state:
+                                print(make_job_description(jid, state, command))
+
         except PSHUserError as e:
             print(e)
         except EOFError as e:
