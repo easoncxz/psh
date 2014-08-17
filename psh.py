@@ -9,6 +9,10 @@ from line_to_words import word_list
 
 parse = word_list
 
+debugging = True
+
+debug = print if debugging else lambda *x: None
+
 class PSHUserError(Exception):
     pass
 
@@ -50,10 +54,6 @@ class JobList:
 
 job_list = JobList()
 
-debugging = False
-
-debug = print if debugging else lambda *x: None
-
 init_dir = None
 
 def suicide():
@@ -69,6 +69,7 @@ state_description_for_code = {
 }
 
 def get_process_something(pid, *things):
+    debug("Trying to get something about process of pid {}".format(pid))
     import subprocess
     ps_output_lines = subprocess.getoutput('ps -p {pid} -o {things}='.format(
             pid=pid,
@@ -155,36 +156,36 @@ def exec_one_command(command):
             raise PSHProgrammerError("Empty command passed to exec_one_command.")
         if command.count('&') > 1:
             raise PSHUserError("Sorry, the programmer didn't know what to do with multiple ampersands in one command.")
-        command = [token for token in command if token != '&']
+        command = [token for token in command if token != '&']  # get rid of the '&'s from the command - we've already consdiered it in `main`.
 
         if '|' in command:
             prev_commands, last_command = split_on_last_pipe(command)
-            pipein, pipeout = os.pipe()
-            pid = os.fork()
+            pipein, pipeout = os.pipe()  # create a pipe, and make a note of the file descriptors. `pipein` is analogous to `stdin`, and `pipeout` is analogous to `stdout`.
+            pid = os.fork()  # fork!
             if not pid:  # child, which deals with all the stuff before the last pipe
-                os.dup2(pipeout, 1)  # 1 for STDOUT
-                os.close(pipein)
+                os.dup2(pipeout, 1)  # Overwrite file of the descriptor 1 with file of descriptor `pipeout`, in the open file table. (1 for STDOUT.)
+                os.close(pipein)  # Since we've already plugged the reading end of the pipe in place, we can get rid of the initial entry of the pipe in the open file table.
+                os.close(pipeout)  # Same as the line above, we forget about the other end of the pipe as well.
+                exec_one_command(prev_commands)  # Recursive call that deals with the remaining pipes.
+            else:  # parent, which runs the last command in the whole pipeline.
+                os.waitpid(pid, 0)  # First we wait for all the previous commands in the pipeline to finish.
+                os.dup2(pipein, 0)  # In the open file table, connect the reading end of the pipe onto where STDIN used to be.
+                os.close(pipein)  # Get rid of the (duplicate) handles onto the pipe in our open file table.
                 os.close(pipeout)
-                exec_one_command(prev_commands)  # require checking!!
-            else:  # parent
-                os.waitpid(pid, 0)
-                os.dup2(pipein, 0)  # 0 for STDIN
-                os.close(pipein)
-                os.close(pipeout)
-                exec_one_command(last_command)  # require checking!!
-        elif run_builtin(command):
-            suicide()  # Imitate the `exec` behaviour of throwing our own process away.
-        else:
+                exec_one_command(last_command)  # Finally, execute the last command in the pipeline.
+        elif run_builtin(command):  # `run_builtin` is one of my custom functions, which attempts to run the command as a builtin, and returns `True` is it did run.
+            suicide()  # Imitate the `exec` behaviour of throwing our own process away. If this isn't done, there'll be multiple copies of this shell running in the user's terminal.
+        else:  # An external command is needed.
             try:
-                os.execvp(command[0], command)
+                os.execvp(command[0], command)  # Run the external command using the PATH environment variable with which the user started this shell.
             except FileNotFoundError as e:
                 raise PSHUserError("Bad command or file name.")
     except PSHUserError as e:
         print(e)
-        suicide()
-    except Exception as e:
-        traceback.print_exc()
-        suicide()
+        suicide()  # Remember what the docstring says - a process that enters this function has to die!
+    except Exception as e:  # We must not allow any exceptions to be thrown back to the caller of this function, otherwise we'll end up having more processes running than we expect.
+        traceback.print_exc()  # prints stack trace, which is what'll usually be done if an exception isn't caught.
+        suicide()  # Remember what the docstring says - a process that enters this function has to die!
 
 def main():
     global init_dir
@@ -209,8 +210,7 @@ def main():
                     elif command[-1] == '&':  # (If) We were asked to run the command in background
                         # Note that the command has *already started running*.
                         jid = job_list.add(top_pid, command)
-                        state = get_process_state(pid=top_pid)
-                        print(make_job_description(jid=jid, state=state, command=command))
+                        print('[{}]   {}'.format(jid, top_pid))
                     else:
                         os.waitpid(top_pid, 0)
 
@@ -219,6 +219,10 @@ def main():
                 state_now = get_process_state(pid)
                 if state_now != state_before:
                     print(make_job_description(jid, state_now, command))
+                    debug("state of the process of pid {} is now {}".format(pid, state_now))
+                    # if state_now == 'Zombie':
+                    #     os.waitpid(pid, 0)
+                    #     job_list.delete(pid=pid)
 
         except PSHUserError as e:
             print(e)
