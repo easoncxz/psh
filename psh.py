@@ -208,10 +208,11 @@ def main():
                     else:
                         os.waitpid(top_pid, 0)
 
-                        # Show state changes of previously-run commands
-                        for jid, pid, command, state in jobs_table_before:
-                            if get_process_state(pid) != state:
-                                print(make_job_description(jid, state, command))
+            # Show state changes of previously-run commands
+            for jid, pid, command, state_before in jobs_table_before:
+                state_now = get_process_state(pid)
+                if state_now != state_before:
+                    print(make_job_description(jid, state_now, command))
 
         except PSHUserError as e:
             print(e)
