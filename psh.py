@@ -16,9 +16,6 @@ debug = print if debugging else lambda *x: None
 
 parse = word_list
 
-def should_foreground(command):
-    return command[-1] != '&' if command else False 
-
 def split_on_last_pipe(command):
     '''Only takes a command that has at least one pipe as the argument.'''
     if '|' not in command:
@@ -36,10 +33,23 @@ def exec_one_command(command):
         raise PSHUserError("Sorry, the programmer didn't know what to do with multiple ampersands in one command.")
     command = [token for token in command if token != '&']
 
-    # if '|' in command:
-    #     pipein, pipeout = os.pipe()
-    #     prev_command, last_command = split_on_last_pipe(command)
-    os.execvp(command[0], command)
+    if '|' in command:
+        pipein, pipeout = os.pipe()
+        prev_command, last_command = split_on_last_pipe(command)
+        pid = os.fork()
+        if not pid:  # child, which deals with all the stuff before the last pipe
+            os.dup2(pipeout, 1)  # 1 for STDOUT
+            os.close(pipein)
+            os.close(pipeout)
+            exec_one_command(prev_command)  # require checking!!
+        else:  # parent
+            os.waitpid(pid, 0)
+            os.dup2(pipein, 0)  # 0 for STDIN
+            os.close(pipein)
+            os.close(pipeout)
+            exec_one_command(last_command)  # require checking!!
+    else:
+        os.execvp(command[0], command)
 
 def main():
     while True:
@@ -50,7 +60,7 @@ def main():
                 top_pid = os.fork()
                 if top_pid == 0:  # So that we still have our shell after executing the command!
                     exec_one_command(command)
-                if should_foreground(command):
+                if command[-1] != '&':
                     os.waitpid(top_pid, 0)
         except PSHUserError as e:
             print(e)
