@@ -50,7 +50,7 @@ class JobList:
 
 job_list = JobList()
 
-debugging = True
+debugging = False
 
 debug = print if debugging else lambda *x: None
 
@@ -132,6 +132,8 @@ def run_builtin(command):
                 try:
                     os.chdir(command[1])  # Ignores the command line args after the first arg, like how Bash does.
                     return True
+                except FileNotFoundError as e:
+                    raise PSHUserError("Folder does not exist.")
                 finally:
                     pass
         elif name == 'pwd':
@@ -188,10 +190,14 @@ def main():
     global init_dir
     global job_list
     init_dir = os.getcwd()
+    if not os.isatty(sys.stdin.fileno()):
+        prompt = ''
+    else:
+        prompt = 'psh> '
     while True:
         try:
             jobs_table_before = [(jid, pid, command, get_process_state(pid)) for (jid, pid, command) in job_list.as_table()]
-            command = parse(input('psh> '))
+            command = parse(input(prompt))
             if command:
                 if '|' in command or not run_builtin(command):
                     # This means that if a builtin command is to take effect, it has to not be in any pipeline.
