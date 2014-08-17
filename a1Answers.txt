@@ -1,0 +1,56 @@
+# SOFTENG 370 - assignment 1
+# Xuzong Chen - id:64771321 - upi:xche985
+
+# I wrote explanations in the form of comments, and copied the code verbatim.
+# You might as well turn Python syntax highlighting on when reading this.
+
+def exec_one_command(command):
+    '''Takes a non-empty list as the argument.
+    Calling this function will cause the current program to be dumped out of the current process!'''
+    debug("exec_one_command running on command:", repr(command))
+
+    try:
+        if not command or not command[0]:
+            raise PSHProgrammerError("Empty command passed to exec_one_command.")
+        if command.count('&') > 1:
+            raise PSHUserError("Sorry, the programmer didn't know what to do with multiple ampersands in one command.")
+        command = [token for token in command if token != '&']  # get rid of the '&'s from the command - we've already consdiered it in `main`.
+
+        if '|' in command:
+            prev_commands, last_command = split_on_last_pipe(command)
+            pipein, pipeout = os.pipe()  # create a pipe, and make a note of the file descriptors. `pipein` is analogous to `stdin`, and `pipeout` is analogous to `stdout`.
+            pid = os.fork()  # fork!
+            if not pid:  # child, which deals with all the stuff before the last pipe
+                os.dup2(pipeout, 1)  # Overwrite file of the descriptor 1 with file of descriptor `pipeout`, in the open file table. (1 for STDOUT.)
+                os.close(pipein)  # Since we've already plugged the reading end of the pipe in place, we can get rid of the initial entry of the pipe in the open file table.
+                os.close(pipeout)  # Same as the line above, we forget about the other end of the pipe as well.
+                exec_one_command(prev_commands)  # Recursive call that deals with the remaining pipes.
+            else:  # parent, which runs the last command in the whole pipeline.
+                os.waitpid(pid, 0)  # First we wait for all the previous commands in the pipeline to finish.
+                os.dup2(pipein, 0)  # In the open file table, connect the reading end of the pipe onto where STDIN used to be.
+                os.close(pipein)  # Get rid of the (duplicate) handles onto the pipe in our open file table.
+                os.close(pipeout)
+                exec_one_command(last_command)  # Finally, execute the last command in the pipeline.
+        elif run_builtin(command):  # `run_builtin` is one of my custom functions, which attempts to run the command as a builtin, and returns `True` is it did run.
+            suicide()  # Imitate the `exec` behaviour of throwing our own process away. If this isn't done, there'll be multiple copies of this shell running in the user's terminal.
+        else:  # An external command is needed.
+            try:
+                os.execvp(command[0], command)  # Run the external command using the PATH environment variable with which the user started this shell.
+            except FileNotFoundError as e:
+                raise PSHUserError("Bad command or file name.")
+    except PSHUserError as e:
+        print(e)
+        suicide()  # Remember what the docstring says - a process that enters this function has to die!
+    except Exception as e:  # We must not allow any exceptions to be thrown back to the caller of this function, otherwise we'll end up having more processes running than we expect.
+        traceback.print_exc()  # prints stack trace, which is what'll usually be done if an exception isn't caught.
+        suicide()  # Remember what the docstring says - a process that enters this function has to die!
+
+'''\
+Question 2:
+
+Typing `cd ..` followed by `pwd` will obviously by all means show you the directory above where the shell was started.
+
+Due to the way pipelines work, the individual commands in the pipeline each gets run in a new, seperate process. The built-in commands are no different from external commands in this regard.
+
+The new process in which `cd` gets run holds the program of our shell (which is why the `cd` command is still able to run at all). The `cd` command will indeed change the working directory of the new instance of our shell in that new process, but as soon as the `cd` command finishes, its process will terminate. "Changing working directory" in the new process does not have any effect on the working directory of the original copy of our shell which started the pipeline.
+'''
