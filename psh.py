@@ -4,6 +4,7 @@ import sys
 import os
 import signal
 import traceback
+import readline
 
 from line_to_words import word_list
 
