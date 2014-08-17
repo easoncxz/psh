@@ -48,11 +48,11 @@ class JobList:
     def as_table(self):
         return [(jid, self._dict[jid][0], self._dict[jid][1]) for jid in sorted(self._dict)]
 
-debugging = True
+job_list = JobList()
+
+debugging = False
 
 debug = print if debugging else lambda *x: None
-
-job_list = JobList()
 
 init_dir = None
 
@@ -132,6 +132,8 @@ def run_builtin(command):
                 try:
                     os.chdir(command[1])  # Ignores the command line args after the first arg, like how Bash does.
                     return True
+                except FileNotFoundError as e:
+                    raise PSHUserError("Folder does not exist.")
                 finally:
                     pass
         elif name == 'pwd':
@@ -188,10 +190,14 @@ def main():
     global init_dir
     global job_list
     init_dir = os.getcwd()
+    if not os.isatty(sys.stdin.fileno()):
+        prompt = ''
+    else:
+        prompt = 'psh> '
     while True:
         try:
             jobs_table_before = [(jid, pid, command, get_process_state(pid)) for (jid, pid, command) in job_list.as_table()]
-            command = parse(input('psh> '))
+            command = parse(input(prompt))
             if command:
                 if '|' in command or not run_builtin(command):
                     # This means that if a builtin command is to take effect, it has to not be in any pipeline.
@@ -208,10 +214,11 @@ def main():
                     else:
                         os.waitpid(top_pid, 0)
 
-                        # Show state changes of previously-run commands
-                        for jid, pid, command, state in jobs_table_before:
-                            if get_process_state(pid) != state:
-                                print(make_job_description(jid, state, command))
+            # Show state changes of previously-run commands
+            for jid, pid, command, state_before in jobs_table_before:
+                state_now = get_process_state(pid)
+                if state_now != state_before:
+                    print(make_job_description(jid, state_now, command))
 
         except PSHUserError as e:
             print(e)
