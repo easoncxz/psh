@@ -69,6 +69,10 @@ state_description_for_code = {
 }
 
 def get_process_something(pid, *things):
+    '''Retrievs some information about the given process.
+    What information to retrieve depends on the `things` argument.
+    The syntax of the `things` argument is the same as that for the `-o` argument for `ps`.
+    I.e., `things` are comma-seperated, with no spaces.'''
     debug("Trying to get something about process of pid {}".format(pid))
     import subprocess
     ps_output_lines = subprocess.getoutput('ps -p {pid} -o {things}='.format(
