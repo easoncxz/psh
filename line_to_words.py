@@ -12,9 +12,9 @@ def word_list(line):
     args = list(lexer)
     return args
 
-while True:
-    line = input('psh> ')
-    print(word_list(line))
+# while True:
+#     line = input('psh> ')
+#     print(word_list(line))
 
 
     
