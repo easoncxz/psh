@@ -16,6 +16,10 @@ debug = print if debugging else lambda *x: None
 
 parse = word_list
 
+builtins = {
+    'cd'
+}
+
 def split_on_last_pipe(command):
     '''Only takes a command that has at least one pipe as the argument.'''
     if '|' not in command:
@@ -57,11 +61,14 @@ def main():
             command = parse(input('psh> '))
             debug('the command was: ', command)
             if command:
-                top_pid = os.fork()
-                if top_pid == 0:  # So that we still have our shell after executing the command!
-                    exec_one_command(command)
-                if command[-1] != '&':
-                    os.waitpid(top_pid, 0)
+                if command[0] in builtins:
+                    print('Builtin {} is not implemented yet.'.format(command[0]))
+                else:
+                    top_pid = os.fork()
+                    if top_pid == 0:  # So that we still have our shell after executing the command!
+                        exec_one_command(command)
+                    if command[-1] != '&':
+                        os.waitpid(top_pid, 0)
         except PSHUserError as e:
             print(e)
         except EOFError as e:
