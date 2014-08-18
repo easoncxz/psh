@@ -155,6 +155,13 @@ def run_builtin(command):
         elif name == 'pwd':
             print(os.getcwd())
             return True
+        elif name == 'jobs':
+            for jid in job_list:
+                print(make_job_description(
+                    jid=jid, 
+                    state=get_process_state(job_list[jid]['pid']),
+                    command=job_list[jid]['command']))
+            return True
 
 def exec_one_command(command):
     '''Takes a non-empty list as the argument.
