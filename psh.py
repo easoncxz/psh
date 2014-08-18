@@ -167,13 +167,24 @@ def exec_one_command(command):
             prev_commands, last_command = split_on_last_pipe(command)
             pipein, pipeout = os.pipe()  # create a pipe, and make a note of the file descriptors. `pipein` is analogous to `stdin`, and `pipeout` is analogous to `stdout`.
             pid = os.fork()  # fork!
-            if not pid:  # child, which deals with all the stuff before the last pipe
-                os.dup2(pipeout, 1)  # Overwrite file of the descriptor 1 with file of descriptor `pipeout`, in the open file table. (1 for STDOUT.)
-                os.close(pipein)  # Since we've already plugged the reading end of the pipe in place, we can get rid of the initial entry of the pipe in the open file table.
-                os.close(pipeout)  # Same as the line above, we forget about the other end of the pipe as well.
-                exec_one_command(prev_commands)  # Recursive call that deals with the remaining pipes.
+            if not pid:  # child, which deals with all the stuff before the last pipe. It is the producer.
+                def sigpipe_callback(sig, frame):
+                    pass  # nothing
+                signal.signal(signal.SIGPIPE, sigpipe_callback)
+                producer_pid = os.fork()
+                if not producer_pid:  # producer
+                    os.dup2(pipeout, 1)  # Overwrite file of the descriptor 1 with file of descriptor `pipeout`, in the open file table. (1 for STDOUT.)
+                    os.close(pipein)  # Since we've already plugged the reading end of the pipe in place, we can get rid of the initial entry of the pipe in the open file table.
+                    os.close(pipeout)  # Same as the line above, we forget about the other end of the pipe as well.
+                    exec_one_command(prev_commands)  # Recursive call that deals with the remaining pipes.
+                else:  # proucer wrapper
+                    try:
+                        os.waitpid(producer_pid, 0)
+                        suicide()
+                    except InterruptedError as ie:
+                        os.kill(producer_pid, signal.SIGTERM)
+                        suicide()
             else:  # parent, which runs the last command in the whole pipeline.
-                os.waitpid(pid, 0)  # First we wait for all the previous commands in the pipeline to finish.
                 os.dup2(pipein, 0)  # In the open file table, connect the reading end of the pipe onto where STDIN used to be.
                 os.close(pipein)  # Get rid of the (duplicate) handles onto the pipe in our open file table.
                 os.close(pipeout)
