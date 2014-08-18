@@ -6,6 +6,7 @@ import signal
 import traceback
 import readline
 from collections import OrderedDict
+from copy import copy
 
 from line_to_words import word_list as parse
 
@@ -99,37 +100,30 @@ state_description_for_code = {
     'Z': 'Zombie',
 }
 
-# def get_process_something(pid, *things):
-#     '''Retrievs some information about the given process.
-#     What information to retrieve depends on the `things` argument.
-#     The syntax of the `things` argument is the same as that for the `-o` argument for `ps`.
-#     I.e., `things` are comma-seperated, with no spaces.'''
-#     debug("Trying to get something about process of pid {}".format(pid))
-#     import subprocess
-#     ps_output_lines = subprocess.getoutput('ps -p {pid} -o {things}='.format(
-#             pid=pid,
-#             things=','.join(things)
-#         )).splitlines()
-#     if not ps_output_lines:
-#         raise PSHProgrammerError("Attempted to get info of a non-existant process.")
-#     elif len(ps_output_lines) == 1:
-#         return ps_output_lines[0]
-#     else:
-#         raise PSHProgrammerError("WTH Multiple processes with the same pid??")
+def get_process_state(pid):
+    '''Retrievs the current state of the given process, in a human-friendly form.
+    If there is no such process, `None` will be returned.
+    '''
+    debug("Trying to get something about process of pid {}".format(pid))
 
-# def get_process_state(pid):
-#     code = get_process_something(pid, 'state')[0]  # Read the first character of the line
-#     return state_description_for_code[code]
+    if type(pid) is not int:
+        raise PSHProgrammerError("pid should be an int.")
+    ps_output_lines = subprocess.getoutput('ps -p {pid} -o state='.format(pid=pid)).splitlines()
+    if not ps_output_lines:
+        return None
+    elif len(ps_output_lines) == 1:
+        return ps_output_lines[0]
+    else:
+        debug("The lines outputted were:")
+        debug(ps_output_lines)
+        raise PSHProgrammerError("WTH Multiple processes with the same pid??")
 
-# def get_process_command_head(pid):
-#     raw_command = get_process_something(pid, 'comm')
-#     return parse(raw_command)
-
-# def make_job_description(jid, state, command):
-#     return "[{jid}] {state}\t\t{command}".format(
-#             jid=jid,
-#             state=state,
-#             command=(' '.join(command)))
+def make_job_description(jid, state, command):
+    '''Formats the given information into a line of text suitable for displaying to the user.'''
+    return "[{jid}] <{state}>\t\t{command}".format(
+            jid=jid,
+            state=state,
+            command=(' '.join(command)))
 
 def split_on_last_pipe(command):
     '''Only takes a non-empty command that has at least one pipe as the argument.'''
@@ -205,9 +199,9 @@ def exec_one_command(command):
                 else:  # proucer wrapper
                     try:
                         os.waitpid(producer_pid, 0)
-                        suicide()
-                    except InterruptedError as ie:
+                    except InterruptedError as ie:  # happens when SIGPIPE is caught.
                         os.kill(producer_pid, signal.SIGTERM)
+                    finally:
                         suicide()
             else:  # parent, which runs the last command in the whole pipeline. It is the consumer.
                 os.dup2(pipein, sys.stdin.fileno())  # In the open file table, connect the reading end of the pipe onto where STDIN used to be.
@@ -230,6 +224,7 @@ def exec_one_command(command):
 
 def main():
     global init_dir
+    global job_list
     init_dir = os.getcwd()
     if not os.isatty(sys.stdin.fileno()):
         prompt = ''
@@ -238,27 +233,41 @@ def main():
     while True:
         try:
             command = parse(input(prompt))
+            previous_job_list = copy(job_list)
             if command:
                 if '|' in command or not run_builtin(command):
                     # This means that if a builtin command is to take effect, it has to not be in any pipeline.
                     # If a builtin command is in a pipeline, it will end up in a different process.
 
+
                     top_pid = os.fork()
                     if top_pid == 0:  # So that we still have our shell after executing the command!
                         exec_one_command(command)
-                    elif command[-1] == '&':
-                        # We were asked to run the command in background.
-                        # Note that the command has *already started running*.
-                        pass
-                    else:
-                        # We were asked to run the command in foreground.
-                        def sigtstp_callback(s, f):
-                            pass
-                        signal.signal(signal.SIGTSTP, sigtstp_callback)
-                        try:
-                            os.waitpid(top_pid, 0)
-                        except InterruptedError as ie:
-                            print('bg:', top_pid)
+                    else:  # In the parent process
+                        if command[-1] == '&':
+                            # We were asked to run the command in background.
+                            # Note that the command has *already started running*.
+                            jid = job_list.add(pid=top_pid, command=command)
+                        else:
+                            # We were asked to run the command in foreground.
+                            def sigtstp_callback(s, f):
+                                pass
+                            signal.signal(signal.SIGTSTP, sigtstp_callback)
+                            try:
+                                os.waitpid(top_pid, 0)
+                            except InterruptedError as ie:  # happens upon catching SIGTSTP
+                                jid = job_list.add(pid=pid, command=command)
+                                print('[{}]   {}'.format(jid, top_pid))
+            for jid in job_list:
+                state = job_list[jid]['pid']
+                if not state:
+                    del job_list[jid]
+                elif state == 'Zombie':
+                    os.waitpid(job_list[jid]['pid'])  # Shouldn't take time at all
+            done_jobs = previous_job_list - job_list
+            if done_jobs:
+                for jid in done_jobs:
+                    print("[{}]  <Done>\t\t{}".format(jid, ' '.join(done_jobs[jid]['command'])))
 
         except PSHUserError as e:
             print(e)
