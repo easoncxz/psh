@@ -6,9 +6,7 @@ import signal
 import traceback
 import readline
 
-from line_to_words import word_list
-
-parse = word_list
+from line_to_words import word_list as parse
 
 debugging = True
 
@@ -20,40 +18,40 @@ class PSHUserError(Exception):
 class PSHProgrammerError(Exception):
     pass
 
-class JobList:
+# class JobList:
 
-    def __init__(self):
-        self._dict = dict()
+#     def __init__(self):
+#         self._dict = dict()
 
-    def add(self, pid, command):
-        if not self._dict:
-            jid = 1
-        else:
-            jid = max(self._dict.keys()) + 1
-        self._dict[jid] = (pid, command)
-        return jid
+#     def add(self, pid, command):
+#         if not self._dict:
+#             jid = 1
+#         else:
+#             jid = max(self._dict.keys()) + 1
+#         self._dict[jid] = (pid, command)
+#         return jid
 
-    def get(self, jid):
-        return self._dict.get(jid)
+#     def get(self, jid):
+#         return self._dict.get(jid)
 
-    def delete(self, jid=None, pid=None):
-        if jid and pid:
-            if self._dict.get(jid) == pid:
-                del self._dict[jid]
-            else:
-                raise PSHProgrammerError("The jid-pid correspondence is wrong.")
-        elif jid:
-            if jid in self._dict:
-                del self._dict[jid]
-        elif pid:
-            for jid in self._dict:
-                if self._dict[jid] == pid:
-                    del self._dict[jid]
+#     def delete(self, jid=None, pid=None):
+#         if jid and pid:
+#             if self._dict.get(jid) == pid:
+#                 del self._dict[jid]
+#             else:
+#                 raise PSHProgrammerError("The jid-pid correspondence is wrong.")
+#         elif jid:
+#             if jid in self._dict:
+#                 del self._dict[jid]
+#         elif pid:
+#             for jid in self._dict:
+#                 if self._dict[jid] == pid:
+#                     del self._dict[jid]
 
-    def as_table(self):
-        return [(jid, self._dict[jid][0], self._dict[jid][1]) for jid in sorted(self._dict)]
+#     def as_table(self):
+#         return [(jid, self._dict[jid][0], self._dict[jid][1]) for jid in sorted(self._dict)]
 
-job_list = JobList()
+# job_list = JobList()
 
 init_dir = None
 
@@ -69,37 +67,37 @@ state_description_for_code = {
     'Z': 'Zombie',
 }
 
-def get_process_something(pid, *things):
-    '''Retrievs some information about the given process.
-    What information to retrieve depends on the `things` argument.
-    The syntax of the `things` argument is the same as that for the `-o` argument for `ps`.
-    I.e., `things` are comma-seperated, with no spaces.'''
-    debug("Trying to get something about process of pid {}".format(pid))
-    import subprocess
-    ps_output_lines = subprocess.getoutput('ps -p {pid} -o {things}='.format(
-            pid=pid,
-            things=','.join(things)
-        )).splitlines()
-    if not ps_output_lines:
-        raise PSHProgrammerError("Attempted to get info of a non-existant process.")
-    elif len(ps_output_lines) == 1:
-        return ps_output_lines[0]
-    else:
-        raise PSHProgrammerError("WTH Multiple processes with the same pid??")
+# def get_process_something(pid, *things):
+#     '''Retrievs some information about the given process.
+#     What information to retrieve depends on the `things` argument.
+#     The syntax of the `things` argument is the same as that for the `-o` argument for `ps`.
+#     I.e., `things` are comma-seperated, with no spaces.'''
+#     debug("Trying to get something about process of pid {}".format(pid))
+#     import subprocess
+#     ps_output_lines = subprocess.getoutput('ps -p {pid} -o {things}='.format(
+#             pid=pid,
+#             things=','.join(things)
+#         )).splitlines()
+#     if not ps_output_lines:
+#         raise PSHProgrammerError("Attempted to get info of a non-existant process.")
+#     elif len(ps_output_lines) == 1:
+#         return ps_output_lines[0]
+#     else:
+#         raise PSHProgrammerError("WTH Multiple processes with the same pid??")
 
-def get_process_state(pid):
-    code = get_process_something(pid, 'state')[0]  # Read the first character of the line
-    return state_description_for_code[code]
+# def get_process_state(pid):
+#     code = get_process_something(pid, 'state')[0]  # Read the first character of the line
+#     return state_description_for_code[code]
 
-def get_process_command_head(pid):
-    raw_command = get_process_something(pid, 'comm')
-    return parse(raw_command)
+# def get_process_command_head(pid):
+#     raw_command = get_process_something(pid, 'comm')
+#     return parse(raw_command)
 
-def make_job_description(jid, state, command):
-    return "[{jid}] {state}\t\t{command}".format(
-            jid=jid,
-            state=state,
-            command=(' '.join(command)))
+# def make_job_description(jid, state, command):
+#     return "[{jid}] {state}\t\t{command}".format(
+#             jid=jid,
+#             state=state,
+#             command=(' '.join(command)))
 
 def split_on_last_pipe(command):
     '''Only takes a non-empty command that has at least one pipe as the argument.'''
@@ -145,11 +143,6 @@ def run_builtin(command):
         elif name == 'pwd':
             print(os.getcwd())
             return True
-        elif name == 'jobs':
-            jobs_table = job_list.as_table()
-            for jid, pid, command in jobs_table:
-                print(make_job_description(jid=jid, state=get_process_state(pid), command=command))
-            return True
 
 def exec_one_command(command):
     '''Takes a non-empty list as the argument.
@@ -173,7 +166,7 @@ def exec_one_command(command):
                 signal.signal(signal.SIGPIPE, sigpipe_callback)
                 producer_pid = os.fork()
                 if not producer_pid:  # producer
-                    os.dup2(pipeout, 1)  # Overwrite file of the descriptor 1 with file of descriptor `pipeout`, in the open file table. (1 for STDOUT.)
+                    os.dup2(pipeout, sys.stdout.fileno())  # Overwrite file of the descriptor 1 with file of descriptor `pipeout`, in the open file table. (1 for STDOUT.)
                     os.close(pipein)  # Since we've already plugged the reading end of the pipe in place, we can get rid of the initial entry of the pipe in the open file table.
                     os.close(pipeout)  # Same as the line above, we forget about the other end of the pipe as well.
                     exec_one_command(prev_commands)  # Recursive call that deals with the remaining pipes.
@@ -184,8 +177,8 @@ def exec_one_command(command):
                     except InterruptedError as ie:
                         os.kill(producer_pid, signal.SIGTERM)
                         suicide()
-            else:  # parent, which runs the last command in the whole pipeline.
-                os.dup2(pipein, 0)  # In the open file table, connect the reading end of the pipe onto where STDIN used to be.
+            else:  # parent, which runs the last command in the whole pipeline. It is the consumer.
+                os.dup2(pipein, sys.stdin.fileno())  # In the open file table, connect the reading end of the pipe onto where STDIN used to be.
                 os.close(pipein)  # Get rid of the (duplicate) handles onto the pipe in our open file table.
                 os.close(pipeout)
                 exec_one_command(last_command)  # Finally, execute the last command in the pipeline.
@@ -198,14 +191,13 @@ def exec_one_command(command):
                 raise PSHUserError("Bad command or file name.")
     except PSHUserError as e:
         print(e)
-        suicide()  # Remember what the docstring says - a process that enters this function has to die!
     except Exception as e:  # We must not allow any exceptions to be thrown back to the caller of this function, otherwise we'll end up having more processes running than we expect.
         traceback.print_exc()  # prints stack trace, which is what'll usually be done if an exception isn't caught.
+    finally:
         suicide()  # Remember what the docstring says - a process that enters this function has to die!
 
 def main():
     global init_dir
-    global job_list
     init_dir = os.getcwd()
     if not os.isatty(sys.stdin.fileno()):
         prompt = ''
@@ -213,7 +205,6 @@ def main():
         prompt = 'psh> '
     while True:
         try:
-            jobs_table_before = [(jid, pid, command, get_process_state(pid)) for (jid, pid, command) in job_list.as_table()]
             command = parse(input(prompt))
             if command:
                 if '|' in command or not run_builtin(command):
@@ -223,11 +214,12 @@ def main():
                     top_pid = os.fork()
                     if top_pid == 0:  # So that we still have our shell after executing the command!
                         exec_one_command(command)
-                    elif command[-1] == '&':  # (If) We were asked to run the command in background
+                    elif command[-1] == '&':
+                        # We were asked to run the command in background.
                         # Note that the command has *already started running*.
-                        jid = job_list.add(top_pid, command)
-                        print('[{}]   {}'.format(jid, top_pid))
+                        pass
                     else:
+                        # We were asked to run the command in foreground.
                         def sigtstp_callback(s, f):
                             pass
                         signal.signal(signal.SIGTSTP, sigtstp_callback)
@@ -235,16 +227,6 @@ def main():
                             os.waitpid(top_pid, 0)
                         except InterruptedError as ie:
                             print('bg:', top_pid)
-
-            # Show state changes of previously-run commands
-            for jid, pid, command, state_before in jobs_table_before:
-                state_now = get_process_state(pid)
-                if state_now != state_before:
-                    print(make_job_description(jid, state_now, command))
-                    debug("state of the process of pid {} is now {}".format(pid, state_now))
-                    # if state_now == 'Zombie':
-                    #     os.waitpid(pid, 0)
-                    #     job_list.delete(pid=pid)
 
         except PSHUserError as e:
             print(e)
