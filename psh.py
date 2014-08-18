@@ -117,6 +117,17 @@ def make_job_description(jid, state, command):
             state=state,
             command=(' '.join(command)))
 
+
+def add_raw_command_to_history(raw_command):
+    global history_list
+    if not history_list:
+        history_list[1] = raw_command
+    else:
+        history_list[1 + max(history_list.keys())] = raw_command
+        debug(dict(history_list))
+    if len(history_list) > 10:
+        del history_list[min(history_list.keys())]
+
 def split_on_last_pipe(command):
     '''Only takes a non-empty command that has at least one pipe as the argument.'''
     if not command:
@@ -191,15 +202,36 @@ def run_builtin(command):
             if previous_foreground_pid:
                 os.kill(previous_foreground_pid, signal.SIGCONT)
                 wait_for_foreground(previous_foreground_jid, previous_foreground_pid)
+        elif name == 'history' or name == 'h':
+            global history_list
+            if len(command) <= 1:
+                for i in history_list:
+                    print(i,':\t', history_list[i])
+                return True
+            else:
+                hid = None
+                try:
+                    hid = int(command[1])
+                except ValueError as ve:
+                    raise PSHUserError("History number isn't an integer.")
+                if hid in history_list:
+                    raw_command = history_list[hid]
+                    command = parse(raw_command)
+
+                    # Rewrite history!
+                    history_list[max(history_list.keys())] = raw_command
+
+                    run_one_command(command)
+                    return True
+                else:
+                    raise PSHUserError("No such history number.")
         elif debugging and name == 'debug':
-            pass
-            print('job_list', job_list)
-            return True
+            import code
+            code.interact(local=globals())
 
 def exec_one_command(command):
     '''Takes a non-empty list as the argument.
     Calling this function will cause the current program to be dumped out of the current process!'''
-    # debug("exec_one_command running on command:", repr(command))
 
     try:
         if not command or not command[0]:
@@ -209,44 +241,111 @@ def exec_one_command(command):
         command = [token for token in command if token != '&']  # get rid of the '&'s from the command - we've already consdiered it in `main`.
 
         if '|' in command:
+            # Split the one command into two commands.
+            # The second command will be the consumer, who consumes the output produced
+            # by the "previous commands", which is the producer.
             prev_commands, last_command = split_on_last_pipe(command)
-            pipein, pipeout = os.pipe()  # create a pipe, and make a note of the file descriptors. `pipein` is analogous to `stdin`, and `pipeout` is analogous to `stdout`.
-            pid = os.fork()  # fork!
-            if not pid:  # child, which deals with all the stuff before the last pipe. It is the producer.
+
+            # Create a pipe, and make a note of the file descriptors.
+            # `pipein` is analogous to `stdin`, which will be read from by the consumer.
+            # `pipeout` is analogous to `stdout`. which will be wrote to, by the producer.
+            pipein, pipeout = os.pipe()  
+
+            # Notice that we created a pipe *before* we forked.
+            # That way, the two processes will have access to *the same* pipe.
+            pid = os.fork()
+            if not pid:  # This is the child, which is all the "previous commands". It is the producer.
+                # If the consumer dies before this producer finishes producing output,
+                # we would get a "broken pipe" problem. To solve this,
+                # we "wrap" the producer around another process which listens
+                # to, and handles, the SIGPIPE signal sent by the OS when the (or all)
+                # process at the other end of the pipe we're holding have terminated.
+
                 def sigpipe_callback(sig, frame):
-                    pass  # nothing
-                signal.signal(signal.SIGPIPE, sigpipe_callback)
-                producer_pid = os.fork()
-                if not producer_pid:  # producer
-                    os.dup2(pipeout, sys.stdout.fileno())  # Overwrite file of the descriptor 1 with file of descriptor `pipeout`, in the open file table. (1 for STDOUT.)
-                    os.close(pipein)  # Since we've already plugged the reading end of the pipe in place, we can get rid of the initial entry of the pipe in the open file table.
-                    os.close(pipeout)  # Same as the line above, we forget about the other end of the pipe as well.
-                    exec_one_command(prev_commands)  # Recursive call that deals with the remaining pipes.
-                else:  # proucer wrapper
+                    pass  # just defining a function.
+                signal.signal(signal.SIGPIPE, sigpipe_callback)  # registering a listener
+                producer_pid = os.fork()  # Create the "wrapping" process
+                if not producer_pid:  # the actual producer
+                    # Plug the writable end of the pipe into where stdout used to be.
+                    # This is done by overwriting the stdout file descriptor with the 
+                    # writable end of the pipe.
+                    os.dup2(pipeout, sys.stdout.fileno())
+
+                    # We don't need more file descriptors pointing to the pipe,
+                    # and it's a better idea to start the command in a clean state.
+                    os.close(pipein)
+                    os.close(pipeout)
+
+                    # Recursive call that deals with the remaining pipes.
+                    exec_one_command(prev_commands) # Being an `exec`, this function call doesn't return.
+                else:  # the proucer wrapper
                     try:
                         os.waitpid(producer_pid, 0)
-                    except InterruptedError as ie:  # happens when SIGPIPE is caught.
+                    except InterruptedError as ie:
+                        # This happens when SIGPIPE is caught.
+                        # It means that the consumer has gone.
+                        # We'll tell the producer to terminate too.
                         os.kill(producer_pid, signal.SIGTERM)
-                    finally:
-                        suicide()
-            else:  # parent, which runs the last command in the whole pipeline. It is the consumer.
-                os.dup2(pipein, sys.stdin.fileno())  # In the open file table, connect the reading end of the pipe onto where STDIN used to be.
-                os.close(pipein)  # Get rid of the (duplicate) handles onto the pipe in our open file table.
+            else:  # This is the parent, which is last command of the pipeline. It is the consumer.
+                # Plug the readable end of the pipe into the stdin port of our process
+                os.dup2(pipein, sys.stdin.fileno())
+
+                # Let go of the extra handles onto the pipe
+                os.close(pipein)
                 os.close(pipeout)
-                exec_one_command(last_command)  # Finally, execute the last command in the pipeline.
-        elif run_builtin(command):  # `run_builtin` is one of my custom functions, which attempts to run the command as a builtin, and returns `True` is it did run.
-            suicide()  # Imitate the `exec` behaviour of throwing our own process away. If this isn't done, there'll be multiple copies of this shell running in the user's terminal.
-        else:  # An external command is needed.
+
+                # Finally, execute the last command in the pipeline.
+                exec_one_command(last_command)
+                # As before, this `exec` call doesn't return.
+        elif not run_builtin(command):
+            # `run_builtin` is one of my custom functions, which attempts to run the
+            # command as a builtin, and returns `True` if it did indeed run successfully.
+
+            # If control reaches here, it means that the command to be executed is not a builtin.
+            # Hence we treat it as an external.
             try:
-                os.execvp(command[0], command)  # Run the external command using the PATH environment variable with which the user started this shell.
-            except FileNotFoundError as e:
+                # Run the external command using the PATH environment variable with which the user started this shell.
+                os.execvp(command[0], command)
+            except FileNotFoundError as e:  # Obviously, the "external command" might just be gibberish.
                 raise PSHUserError("Bad command or file name.")
     except PSHUserError as e:
         print(e)
     except Exception as e:  # We must not allow any exceptions to be thrown back to the caller of this function, otherwise we'll end up having more processes running than we expect.
         traceback.print_exc()  # prints stack trace, which is what'll usually be done if an exception isn't caught.
     finally:
-        suicide()  # Remember what the docstring says - a process that enters this function has to die!
+        # To complete the recursive process, this exit of the 
+        # function also needs to "dump the entire process away" and
+        # "not return" too, as its docstring says.
+        suicide()
+
+
+def run_one_command(command):
+    '''Run the given command, and wait for it.
+    The process calling this function won't be exec'ed.'''
+    top_pid = os.fork()
+    if top_pid == 0:
+        # child
+        # we'll use this process to run the actual command.
+        exec_one_command(command)
+    else:
+        # parent
+        # we'll use this process to do the blocking waiting,
+        # and the signal handling.
+        if command[-1] == '&':
+            # We were asked to run the command in background.
+            # Note that the command has *already started running*.
+            # We simply don't wait for it.
+            job_list.add(pid=top_pid, command=command)
+            previous_job_is_backgrounded = True
+        else:
+            # We were asked to run the command in foreground.
+            # Not only do we need to wait for it,
+            # we also have to handle ^Z keypresses (i.e. SIGTSTP signals)
+            
+            previous_job_is_backgrounded = False
+            previous_foreground_pid = top_pid
+            previous_foreground_jid = jid
+            wait_for_foreground(jid, top_pid)
 
 def main():
     global init_dir
@@ -255,6 +354,7 @@ def main():
     global previous_foreground_pid
     global previous_foreground_jid
     previous_job_is_backgrounded = None
+    global history_list
     init_dir = os.getcwd()
     if not os.isatty(sys.stdin.fileno()):
         prompt = ''
@@ -280,46 +380,26 @@ def main():
                     print("[{}]  <Done>\t\t{}".format(jid, ' '.join(done_jobs[jid]['command'])))
             del done_jobs
 
-            command = parse(input(prompt))
+            # Get the command
+            raw_command = input(prompt)
+            command = parse(raw_command)
+            add_raw_command_to_history(raw_command)
+
+            # Run comand
             if command:
                 if '|' in command or not run_builtin(command):
                     # This means that if a builtin command is to take effect, it has to not be in any pipeline.
                     # If a builtin command is in a pipeline, it will end up in a different process.
+                    run_one_command(command)
 
-                    top_pid = os.fork()
-                    if top_pid == 0:  # So that we still have our shell after executing the command!
-                        exec_one_command(command)
-                    else:  # In the parent process
-                        jid = job_list.add(pid=top_pid, command=command)
-                        if command[-1] == '&':
-                            # We were asked to run the command in background.
-                            # Note that the command has *already started running*.
-                            pass  # nothing to do
-                            previous_job_is_backgrounded = True
-                        else:
-                            # We were asked to run the command in foreground.
-                            previous_foreground_pid = top_pid
-                            previous_foreground_jid = jid
-                            wait_for_foreground(jid, top_pid)
-                            # def sigtstp_callback(s, f):
-                            #     pass
-                            # signal.signal(signal.SIGTSTP, sigtstp_callback)
-                            # try:
-                            #     os.waitpid(top_pid, 0)
-                            # except InterruptedError as ie:  # happens upon catching SIGTSTP
-                            #     os.kill(top_pid, signal.SIGSTOP)
-                            #     print('[{}]   {}'.format(jid, top_pid))
-                    del top_pid
             previous_job_list = deepcopy(job_list)
         except PSHUserError as e:
             print(e)
-        except KeyboardInterrupt as e:
+        except KeyboardInterrupt as e:  # catches ^C key presses
+            print()  # cleans line, being about to read a new command.
+        except EOFError as e:  # catches ^D key presses
             print()
-        except EOFError as e:
-            for jid in job_list:
-                os.kill(job_list[jid]['pid'], signal.SIGTERM)
-            print()
-            return
+            return  # terminates the shell
 
 if __name__ == '__main__':
     main()
