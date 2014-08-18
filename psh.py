@@ -176,8 +176,8 @@ def run_builtin(command):
                     command=job_list[jid]['command']))
             return True
         elif name == 'history' or name == 'h':
+            global history_list
             if len(command) <= 1:
-                global history_list
                 for i in history_list:
                     print(i,':\t', history_list[i])
                 return True
@@ -192,30 +192,9 @@ def run_builtin(command):
                     command = parse(raw_command)
 
                     # Rewrite history!
-                    global history_list
                     history_list[max(history_list.keys())] = raw_command
 
-                    top_pid = os.fork()
-                    if top_pid == 0:  # So that we still have our shell after executing the command!
-                        exec_one_command(command)
-                    else:  # In the parent process
-                        if command[-1] == '&':
-                            # We were asked to run the command in background.
-                            # Note that the command has *already started running*.
-                            jid = job_list.add(pid=top_pid, command=command)
-                        else:
-                            # We were asked to run the command in foreground.
-                            def sigtstp_callback(s, f):
-                                pass
-                            signal.signal(signal.SIGTSTP, sigtstp_callback)
-                            try:
-                                os.waitpid(top_pid, 0)
-                            except InterruptedError as ie:  # happens upon catching SIGTSTP
-                                jid = job_list.add(pid=top_pid, command=command)
-                                print('[{}]   {}'.format(jid, top_pid))
-                            finally:
-                                del sigtstp_callback
-                    del top_pid
+                    run_one_command(command)
                     return True
                 else:
                     raise PSHUserError("No such history number.")
@@ -275,6 +254,30 @@ def exec_one_command(command):
     finally:
         suicide()  # Remember what the docstring says - a process that enters this function has to die!
 
+
+def run_one_command(command):
+    top_pid = os.fork()
+    if top_pid == 0:  # So that we still have our shell after executing the command!
+        exec_one_command(command)
+    else:  # In the parent process
+        if command[-1] == '&':
+            # We were asked to run the command in background.
+            # Note that the command has *already started running*.
+            jid = job_list.add(pid=top_pid, command=command)
+        else:
+            # We were asked to run the command in foreground.
+            def sigtstp_callback(s, f):
+                pass
+            signal.signal(signal.SIGTSTP, sigtstp_callback)
+            try:
+                os.waitpid(top_pid, 0)
+            except InterruptedError as ie:  # happens upon catching SIGTSTP
+                jid = job_list.add(pid=top_pid, command=command)
+                print('[{}]   {}'.format(jid, top_pid))
+            finally:
+                del sigtstp_callback
+    del top_pid
+
 def main():
     global init_dir
     global job_list
@@ -314,29 +317,8 @@ def main():
                 if '|' in command or not run_builtin(command):
                     # This means that if a builtin command is to take effect, it has to not be in any pipeline.
                     # If a builtin command is in a pipeline, it will end up in a different process.
+                    run_one_command(command)
 
-
-                    top_pid = os.fork()
-                    if top_pid == 0:  # So that we still have our shell after executing the command!
-                        exec_one_command(command)
-                    else:  # In the parent process
-                        if command[-1] == '&':
-                            # We were asked to run the command in background.
-                            # Note that the command has *already started running*.
-                            jid = job_list.add(pid=top_pid, command=command)
-                        else:
-                            # We were asked to run the command in foreground.
-                            def sigtstp_callback(s, f):
-                                pass
-                            signal.signal(signal.SIGTSTP, sigtstp_callback)
-                            try:
-                                os.waitpid(top_pid, 0)
-                            except InterruptedError as ie:  # happens upon catching SIGTSTP
-                                jid = job_list.add(pid=top_pid, command=command)
-                                print('[{}]   {}'.format(jid, top_pid))
-                            finally:
-                                del sigtstp_callback
-                    del top_pid
             previous_job_list = deepcopy(job_list)
         except PSHUserError as e:
             print(e)
