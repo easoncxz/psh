@@ -228,7 +228,13 @@ def main():
                         jid = job_list.add(top_pid, command)
                         print('[{}]   {}'.format(jid, top_pid))
                     else:
-                        os.waitpid(top_pid, 0)
+                        def sigtstp_callback(s, f):
+                            pass
+                        signal.signal(signal.SIGTSTP, sigtstp_callback)
+                        try:
+                            os.waitpid(top_pid, 0)
+                        except InterruptedError as ie:
+                            print('bg:', top_pid)
 
             # Show state changes of previously-run commands
             for jid, pid, command, state_before in jobs_table_before:
