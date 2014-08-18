@@ -6,11 +6,11 @@ import signal
 import traceback
 import readline
 from collections import OrderedDict
-from copy import copy
+from copy import deepcopy
 
 from line_to_words import word_list as parse
 
-debugging = True
+debugging = False
 
 debug = print if debugging else lambda *x: None
 
@@ -20,23 +20,20 @@ class PSHUserError(Exception):
 class PSHProgrammerError(Exception):
     pass
 
-class JobList:
+class JobList(OrderedDict):
     '''This class simply implements an abstract data type.
     All operations on a JobList object makes no effect on anything else, e.g. processes.
     '''
-
-    def __init__(self):
-        self.d = OrderedDict()
 
     def add(self, pid=None, command=None):
         '''Adds a pid and a command to the job list, returning the job of the process just added.'''
         if not pid or not command:
             raise PSHProgrammerError("To add a new job list entry, provide both the pid and the command of the job.")
-        elif not self.d:
+        elif not self:
             jid = 1
         else:
-            jid = max(self.d.keys()) + 1
-        self.d[jid] = {
+            jid = max(self.keys()) + 1
+        self[jid] = {
             'pid': pid,
             'command': command
         }
@@ -48,41 +45,29 @@ class JobList:
         if not jid:
             raise PSHProgrammerError("To get a job's info, you need to supply a jid.")
         else:
-            return self.d.get(jid)
+            return self.get(jid)
 
     def delete(self, jid=None):
         '''If a job with the given jid currently exists, delete that job from the job list.'''
         if jid and pid:
-            if self.d.get(jid) == pid:
-                del self.d[jid]
+            if self.get(jid) == pid:
+                del self[jid]
             else:
                 raise PSHProgrammerError("The jid-pid correspondence is wrong.")
         elif jid:
-            if jid in self.d:
-                del self.d[jid]
+            if jid in self:
+                del self[jid]
         elif pid:
-            for jid in self.d:
-                if self.d[jid] == pid:
-                    del self.d[jid]
+            for jid in self:
+                if self[jid] == pid:
+                    del self[jid]
 
     def __sub__(self, other):
         '''Returns the jobs that are in this job list but not the other'''
         if not isinstance(other, JobList):
-            raise PSHProgrammerError("Cannot find difference between a JobList and a different thing.")
+            raise TypeError("Cannot find difference between a JobList and a different thing.")
         else:
-            return {k: self.d[k] for k in self.d if k in other.d}
-
-    def __str__(self):
-        return str(dict(self.d))
-
-    def __repr__(self):
-        return repr(dict(self.d))
-
-    def __getattribute__(self, *args, **kwargs):
-        try:
-            return super(JobList, self).__getattribute__(*args, **kwargs)
-        except AttributeError:
-            return self.d.__getattribute__(*args, **kwargs)
+            return {k: self[k] for k in self if k not in other}
 
 job_list = JobList()
 
@@ -106,13 +91,14 @@ def get_process_state(pid):
     '''
     debug("Trying to get something about process of pid {}".format(pid))
 
+    import subprocess
     if type(pid) is not int:
         raise PSHProgrammerError("pid should be an int.")
     ps_output_lines = subprocess.getoutput('ps -p {pid} -o state='.format(pid=pid)).splitlines()
     if not ps_output_lines:
         return None
     elif len(ps_output_lines) == 1:
-        return ps_output_lines[0]
+        return state_description_for_code[ps_output_lines[0][0]]
     else:
         debug("The lines outputted were:")
         debug(ps_output_lines)
@@ -173,7 +159,7 @@ def run_builtin(command):
 def exec_one_command(command):
     '''Takes a non-empty list as the argument.
     Calling this function will cause the current program to be dumped out of the current process!'''
-    debug("exec_one_command running on command:", repr(command))
+    # debug("exec_one_command running on command:", repr(command))
 
     try:
         if not command or not command[0]:
@@ -230,10 +216,27 @@ def main():
         prompt = ''
     else:
         prompt = 'psh> '
+    previous_job_list = JobList()
     while True:
         try:
+            # Get rid of zombies
+            debug("job_list: ", job_list)
+            for jid in job_list:
+                state = get_process_state(job_list[jid]['pid'])
+                if not state:  # process doesn't even exist anymore
+                    del job_list[jid]
+                elif state == 'Zombie':
+                    os.waitpid(job_list[jid]['pid'], 0)  # Shouldn't take time at all
+                    del job_list[jid]
+
+            # Show "Done" jobs
+            done_jobs = previous_job_list - job_list
+            debug("done_jobs: ", done_jobs)
+            for jid in done_jobs:
+                print("[{}]  <Done>\t\t{}".format(jid, ' '.join(done_jobs[jid]['command'])))
+            del done_jobs
+
             command = parse(input(prompt))
-            previous_job_list = copy(job_list)
             if command:
                 if '|' in command or not run_builtin(command):
                     # This means that if a builtin command is to take effect, it has to not be in any pipeline.
@@ -256,19 +259,12 @@ def main():
                             try:
                                 os.waitpid(top_pid, 0)
                             except InterruptedError as ie:  # happens upon catching SIGTSTP
-                                jid = job_list.add(pid=pid, command=command)
+                                jid = job_list.add(pid=top_pid, command=command)
                                 print('[{}]   {}'.format(jid, top_pid))
-            for jid in job_list:
-                state = job_list[jid]['pid']
-                if not state:
-                    del job_list[jid]
-                elif state == 'Zombie':
-                    os.waitpid(job_list[jid]['pid'])  # Shouldn't take time at all
-            done_jobs = previous_job_list - job_list
-            if done_jobs:
-                for jid in done_jobs:
-                    print("[{}]  <Done>\t\t{}".format(jid, ' '.join(done_jobs[jid]['command'])))
-
+                            finally:
+                                del sigtstp_callback
+                    del top_pid
+            previous_job_list = deepcopy(job_list)
         except PSHUserError as e:
             print(e)
         except KeyboardInterrupt as e:
