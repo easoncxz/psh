@@ -5,6 +5,7 @@ import os
 import signal
 import traceback
 import readline
+from collections import OrderedDict
 
 from line_to_words import word_list as parse
 
@@ -18,40 +19,71 @@ class PSHUserError(Exception):
 class PSHProgrammerError(Exception):
     pass
 
-# class JobList:
+class JobList:
+    '''This class simply implements an abstract data type.
+    All operations on a JobList object makes no effect on anything else, e.g. processes.
+    '''
 
-#     def __init__(self):
-#         self._dict = dict()
+    def __init__(self):
+        self.d = OrderedDict()
 
-#     def add(self, pid, command):
-#         if not self._dict:
-#             jid = 1
-#         else:
-#             jid = max(self._dict.keys()) + 1
-#         self._dict[jid] = (pid, command)
-#         return jid
+    def add(self, pid=None, command=None):
+        '''Adds a pid and a command to the job list, returning the job of the process just added.'''
+        if not pid or not command:
+            raise PSHProgrammerError("To add a new job list entry, provide both the pid and the command of the job.")
+        elif not self.d:
+            jid = 1
+        else:
+            jid = max(self.d.keys()) + 1
+        self.d[jid] = {
+            'pid': pid,
+            'command': command
+        }
+        return jid
 
-#     def get(self, jid):
-#         return self._dict.get(jid)
+    def get(self, jid=None):
+        '''Returns a dictionary with keys "pid" and "command" that holds info about the job of the given jid.
+        If not job with such jid exists, returns `None`.'''
+        if not jid:
+            raise PSHProgrammerError("To get a job's info, you need to supply a jid.")
+        else:
+            return self.d.get(jid)
 
-#     def delete(self, jid=None, pid=None):
-#         if jid and pid:
-#             if self._dict.get(jid) == pid:
-#                 del self._dict[jid]
-#             else:
-#                 raise PSHProgrammerError("The jid-pid correspondence is wrong.")
-#         elif jid:
-#             if jid in self._dict:
-#                 del self._dict[jid]
-#         elif pid:
-#             for jid in self._dict:
-#                 if self._dict[jid] == pid:
-#                     del self._dict[jid]
+    def delete(self, jid=None):
+        '''If a job with the given jid currently exists, delete that job from the job list.'''
+        if jid and pid:
+            if self.d.get(jid) == pid:
+                del self.d[jid]
+            else:
+                raise PSHProgrammerError("The jid-pid correspondence is wrong.")
+        elif jid:
+            if jid in self.d:
+                del self.d[jid]
+        elif pid:
+            for jid in self.d:
+                if self.d[jid] == pid:
+                    del self.d[jid]
 
-#     def as_table(self):
-#         return [(jid, self._dict[jid][0], self._dict[jid][1]) for jid in sorted(self._dict)]
+    def __sub__(self, other):
+        '''Returns the jobs that are in this job list but not the other'''
+        if not isinstance(other, JobList):
+            raise PSHProgrammerError("Cannot find difference between a JobList and a different thing.")
+        else:
+            return {k: self.d[k] for k in self.d if k in other.d}
 
-# job_list = JobList()
+    def __str__(self):
+        return str(dict(self.d))
+
+    def __repr__(self):
+        return repr(dict(self.d))
+
+    def __getattribute__(self, *args, **kwargs):
+        try:
+            return super(JobList, self).__getattribute__(*args, **kwargs)
+        except AttributeError:
+            return self.d.__getattribute__(*args, **kwargs)
+
+job_list = JobList()
 
 init_dir = None
 
