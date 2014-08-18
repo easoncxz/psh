@@ -73,6 +73,8 @@ job_list = JobList()
 
 init_dir = None
 
+history_list = OrderedDict()
+
 def suicide():
     os.kill(os.getpid(), signal.SIGTERM)
 
@@ -110,6 +112,17 @@ def make_job_description(jid, state, command):
             jid=jid,
             state=state,
             command=(' '.join(command)))
+
+
+def add_raw_command_to_history(raw_command):
+    global history_list
+    if not history_list:
+        history_list[1] = raw_command
+    else:
+        history_list[1 + max(history_list.keys())] = raw_command
+        debug(dict(history_list))
+    if len(history_list) > 10:
+        del history_list[min(history_list.keys())]
 
 def split_on_last_pipe(command):
     '''Only takes a non-empty command that has at least one pipe as the argument.'''
@@ -162,6 +175,53 @@ def run_builtin(command):
                     state=get_process_state(job_list[jid]['pid']),
                     command=job_list[jid]['command']))
             return True
+        elif name == 'history' or name == 'h':
+            if len(command) <= 1:
+                global history_list
+                for i in history_list:
+                    print(i,':\t', history_list[i])
+                return True
+            else:
+                hid = None
+                try:
+                    hid = int(command[1])
+                except ValueError as ve:
+                    raise PSHUserError("History number isn't an integer.")
+                if hid in history_list:
+                    raw_command = history_list[hid]
+                    command = parse(raw_command)
+
+                    # Rewrite history!
+                    global history_list
+                    history_list[max(history_list.keys())] = raw_command
+
+                    top_pid = os.fork()
+                    if top_pid == 0:  # So that we still have our shell after executing the command!
+                        exec_one_command(command)
+                    else:  # In the parent process
+                        if command[-1] == '&':
+                            # We were asked to run the command in background.
+                            # Note that the command has *already started running*.
+                            jid = job_list.add(pid=top_pid, command=command)
+                        else:
+                            # We were asked to run the command in foreground.
+                            def sigtstp_callback(s, f):
+                                pass
+                            signal.signal(signal.SIGTSTP, sigtstp_callback)
+                            try:
+                                os.waitpid(top_pid, 0)
+                            except InterruptedError as ie:  # happens upon catching SIGTSTP
+                                jid = job_list.add(pid=top_pid, command=command)
+                                print('[{}]   {}'.format(jid, top_pid))
+                            finally:
+                                del sigtstp_callback
+                    del top_pid
+                    return True
+                else:
+                    raise PSHUserError("No such history number.")
+        elif debugging and name == 'debug':
+            import code
+            code.interact(local=globals())
 
 def exec_one_command(command):
     '''Takes a non-empty list as the argument.
@@ -218,6 +278,7 @@ def exec_one_command(command):
 def main():
     global init_dir
     global job_list
+    global history_list
     init_dir = os.getcwd()
     if not os.isatty(sys.stdin.fileno()):
         prompt = ''
@@ -243,7 +304,12 @@ def main():
                 print("[{}]  <Done>\t\t{}".format(jid, ' '.join(done_jobs[jid]['command'])))
             del done_jobs
 
-            command = parse(input(prompt))
+            raw_command = input(prompt)
+            command = parse(raw_command)
+
+            # Add the command to history immediately
+            add_raw_command_to_history(raw_command)
+
             if command:
                 if '|' in command or not run_builtin(command):
                     # This means that if a builtin command is to take effect, it has to not be in any pipeline.
