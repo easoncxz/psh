@@ -10,7 +10,7 @@ from copy import deepcopy
 
 from line_to_words import word_list as parse
 
-debugging = False
+debugging = True
 
 debug = print if debugging else lambda *x: None
 
@@ -73,6 +73,12 @@ job_list = JobList()
 
 init_dir = None
 
+previous_job_list = JobList()
+
+previous_foreground_jid = None
+
+previous_foreground_pid = None
+
 def suicide():
     os.kill(os.getpid(), signal.SIGTERM)
 
@@ -89,7 +95,7 @@ def get_process_state(pid):
     '''Retrievs the current state of the given process, in a human-friendly form.
     If there is no such process, `None` will be returned.
     '''
-    debug("Trying to get something about process of pid {}".format(pid))
+    # debug("Trying to get something about process of pid {}".format(pid))
 
     import subprocess
     if type(pid) is not int:
@@ -125,11 +131,25 @@ def split_on_last_pipe(command):
             else:
                 ind -= 1
         prev_commands, last_command = command[:ind], command[ind + 1:]
-        debug("split result:", prev_commands, last_command)
+        # debug("split result:", prev_commands, last_command)
         if not prev_commands or not last_command or prev_commands[0] == '|' or prev_commands[-1] == '|' or last_command[0] == '|' or last_command[-1] == '|':
             raise PSHUserError("Your pipe syntax is wrong. Please make sure there are commands on both sides of all your pipes.")
         else:
             return prev_commands, last_command
+
+def wait_for_foreground(jid, pid):
+    '''Assume the process of the given pid is nwo running in the foreground,
+    we wait for it, and also listen to SIGTSTP.'''
+    def sigtstp_callback(s, f):
+        pass
+    signal.signal(signal.SIGTSTP, sigtstp_callback)
+    try:
+        os.waitpid(pid, 0)
+    except InterruptedError as ie:  # happens upon catching SIGTSTP
+        os.kill(pid, signal.SIGSTOP)
+        print('[{}]   {}'.format(jid, pid))
+    except ChildProcessError as cpe:
+        pass
 
 def run_builtin(command):
     '''Takes a non-empty list as the argument.
@@ -161,6 +181,19 @@ def run_builtin(command):
                     jid=jid, 
                     state=get_process_state(job_list[jid]['pid']),
                     command=job_list[jid]['command']))
+            return True
+        elif name == 'fg':
+            # if job_list:
+            #     jid = max(job_list)  # Get the most recent job
+            #     pid = job_list[jid]['pid']
+            #     os.kill(pid, signal.SIGCONT)
+            #     debug('job_list:', job_list)
+            if previous_foreground_pid:
+                os.kill(previous_foreground_pid, signal.SIGCONT)
+                wait_for_foreground(previous_foreground_jid, previous_foreground_pid)
+        elif debugging and name == 'debug':
+            pass
+            print('job_list', job_list)
             return True
 
 def exec_one_command(command):
@@ -218,16 +251,19 @@ def exec_one_command(command):
 def main():
     global init_dir
     global job_list
+    global previous_job_list
+    global previous_foreground_pid
+    global previous_foreground_jid
+    previous_job_is_backgrounded = None
     init_dir = os.getcwd()
     if not os.isatty(sys.stdin.fileno()):
         prompt = ''
     else:
         prompt = 'psh> '
-    previous_job_list = JobList()
     while True:
         try:
             # Get rid of zombies
-            debug("job_list: ", job_list)
+            # debug("job_list: ", job_list)
             for jid in job_list:
                 state = get_process_state(job_list[jid]['pid'])
                 if not state:  # process doesn't even exist anymore
@@ -238,9 +274,10 @@ def main():
 
             # Show "Done" jobs
             done_jobs = previous_job_list - job_list
-            debug("done_jobs: ", done_jobs)
-            for jid in done_jobs:
-                print("[{}]  <Done>\t\t{}".format(jid, ' '.join(done_jobs[jid]['command'])))
+            # debug("done_jobs: ", done_jobs)
+            if previous_job_is_backgrounded:
+                for jid in done_jobs:
+                    print("[{}]  <Done>\t\t{}".format(jid, ' '.join(done_jobs[jid]['command'])))
             del done_jobs
 
             command = parse(input(prompt))
@@ -249,27 +286,29 @@ def main():
                     # This means that if a builtin command is to take effect, it has to not be in any pipeline.
                     # If a builtin command is in a pipeline, it will end up in a different process.
 
-
                     top_pid = os.fork()
                     if top_pid == 0:  # So that we still have our shell after executing the command!
                         exec_one_command(command)
                     else:  # In the parent process
+                        jid = job_list.add(pid=top_pid, command=command)
                         if command[-1] == '&':
                             # We were asked to run the command in background.
                             # Note that the command has *already started running*.
-                            jid = job_list.add(pid=top_pid, command=command)
+                            pass  # nothing to do
+                            previous_job_is_backgrounded = True
                         else:
                             # We were asked to run the command in foreground.
-                            def sigtstp_callback(s, f):
-                                pass
-                            signal.signal(signal.SIGTSTP, sigtstp_callback)
-                            try:
-                                os.waitpid(top_pid, 0)
-                            except InterruptedError as ie:  # happens upon catching SIGTSTP
-                                jid = job_list.add(pid=top_pid, command=command)
-                                print('[{}]   {}'.format(jid, top_pid))
-                            finally:
-                                del sigtstp_callback
+                            previous_foreground_pid = top_pid
+                            previous_foreground_jid = jid
+                            wait_for_foreground(jid, top_pid)
+                            # def sigtstp_callback(s, f):
+                            #     pass
+                            # signal.signal(signal.SIGTSTP, sigtstp_callback)
+                            # try:
+                            #     os.waitpid(top_pid, 0)
+                            # except InterruptedError as ie:  # happens upon catching SIGTSTP
+                            #     os.kill(top_pid, signal.SIGSTOP)
+                            #     print('[{}]   {}'.format(jid, top_pid))
                     del top_pid
             previous_job_list = deepcopy(job_list)
         except PSHUserError as e:
@@ -277,6 +316,8 @@ def main():
         except KeyboardInterrupt as e:
             print()
         except EOFError as e:
+            for jid in job_list:
+                os.kill(job_list[jid]['pid'], signal.SIGTERM)
             print()
             return
 
